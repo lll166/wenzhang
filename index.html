@@ -2558,13 +2558,23 @@ async function snapshotPage(pageIndex,{scale}={}){
         const fams=new Set();
         const bf=state.settings.layout.font, tf=state.settings.page.cardTitleFont;
         for(const f of [bf,tf]) if(f&&f!=='inherit'&&WEBFONTS[f]) fams.add(WEBFONTS[f].family);
-        const sample=((currentDoc&&currentDoc.title)||'')+(state.md||'').slice(0,800);
+        let sample=((currentDoc&&currentDoc.title)||'')+(state.md||'').slice(0,800);
         const rootEl=keepRoot&&keepRoot.querySelector?keepRoot:null;
         const paperText=rootEl&&rootEl.innerText?rootEl.innerText.trim():'';
         if(paperText){ sample = (sample||'') + paperText; }
         const loads=[doc.fonts.load(`16px serif`, sample)];
         for(const f of fams) loads.push(doc.fonts.load(`16px "${f}"`, sample));
-        await Promise.race([Promise.all(loads), new Promise(r=>setTimeout(r,8000))]);
+        // 兜底：遍历克隆文档中属于这些字体的全部 @font-face 分片，用完整文本逐一预取，
+        // 确保每个用到的字形都落到正确字体子集，避免中文标点（如【与前引号）跨字体回退导致重叠。
+        try{
+          if(doc.fonts&&doc.fonts.forEach){
+            doc.fonts.forEach(ff=>{
+              let fn=(ff&&ff.family)||''; fn=(typeof fn==='string')?fn.replace(/^['"]|['"]$/g,''):'';
+              if(fn&&fams.has(fn)){ try{ loads.push(ff.load&&ff.load.bind?ff.load(sample):Promise.resolve()); }catch(_){} }
+            });
+          }
+        }catch(_){}
+        await Promise.race([Promise.all(loads), new Promise(r=>setTimeout(r,9000))]);
         await doc.fonts.ready;
       }catch(e){}
     }});
