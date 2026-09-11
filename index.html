@@ -2554,6 +2554,13 @@ async function snapshotPage(pageIndex,{scale}={}){
           }
           doc.body.style.cssText='margin:0;padding:0;overflow:visible;background:#fff';
         }
+        // 关闭浏览器对「并列全角标点」的自动压缩（如“【“”拓”里的引号紧贴压缩），
+        // 使导出克隆的排版度量与 html2canvas 的画布度量一致，避免引号与中文字重叠。
+        try{
+          const st=document.createElement('style');
+          st.textContent='.page-body,.page-body *{text-autospace:no-autospace !important;text-spacing:none !important;text-compress:none !important;letter-spacing:normal !important;}';
+          (doc.head||doc.documentElement).appendChild(st);
+        }catch(_){}
         if(!doc.fonts)return;
         const fams=new Set();
         const bf=state.settings.layout.font, tf=state.settings.page.cardTitleFont;
