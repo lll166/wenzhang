@@ -2536,6 +2536,14 @@ async function snapshotPage(pageIndex,{scale}={}){
     // 文字绘制坐标互相叠加。这里只保留导出目标的祖先链，其余全部移除。
     onclone: async (doc, clonedEl)=>{
       try{
+        // 关键修复3：关闭克隆文档导出区域的 letter-spacing 与 CJK 标点挤压。
+        // html2canvas-pro 在 letter-spacing≠0 时逐字绘制并用 ctx.measureText(单字) 累加定位，
+        // 但 canvas 不做浏览器的 CJK 标点挤压（如连续开标点【“会被压成约1.5em），
+        // 且 ctx 未同步 letterSpacing → 标点后的汉字被整体右推、与引号重叠。
+        // 统一为“原始字形前进量”后，DOM 排版与 canvas 绘制逐字对齐。
+        const fixStyle=doc.createElement('style');
+        fixStyle.textContent='#exportStage,#exportStage *{letter-spacing:0 !important;text-spacing-trim:space-all !important;}';
+        (doc.head||doc.documentElement).appendChild(fixStyle);
         const keepRoot = clonedEl && clonedEl.nodeType===1 ? clonedEl : doc.getElementById('exportStage');
         if(keepRoot && doc.body){
           // 从引用元素回溯到 body 的祖先链
@@ -2554,13 +2562,6 @@ async function snapshotPage(pageIndex,{scale}={}){
           }
           doc.body.style.cssText='margin:0;padding:0;overflow:visible;background:#fff';
         }
-        // 关闭浏览器对「并列全角标点」的自动压缩（如“【“”拓”里的引号紧贴压缩），
-        // 使导出克隆的排版度量与 html2canvas 的画布度量一致，避免引号与中文字重叠。
-        try{
-          const st=document.createElement('style');
-          st.textContent='.page-body,.page-body *{text-autospace:no-autospace !important;text-spacing:none !important;text-compress:none !important;letter-spacing:normal !important;}';
-          (doc.head||doc.documentElement).appendChild(st);
-        }catch(_){}
         if(!doc.fonts)return;
         const fams=new Set();
         const bf=state.settings.layout.font, tf=state.settings.page.cardTitleFont;
