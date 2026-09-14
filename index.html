@@ -641,7 +641,7 @@ body.immersive #stageWrap{padding:20px}
             </optgroup>
           </select></div>
         <div class="hint-txt">在线字体经 jsDelivr CDN 分片加载（需联网），离线自动回退系统字体；思源宋黑在线状态下也会启用真字体</div>
-        <div class="row"><label>字号</label><input type="range" id="fsR" min="10" max="64" step="0.5"><span class="rval" id="fsV"></span></div>
+        <div class="row"><label>字号</label><input type="range" id="fsR" min="8" max="64" step="0.5"><span class="rval" id="fsV"></span></div>
         <div class="row"><label>行高</label><input type="range" id="lhR" min="1.2" max="2.6" step="0.05"><span class="rval" id="lhV"></span></div>
         <div class="row"><label>段间距</label><input type="range" id="paraR" min="0" max="2.5" step="0.05"><span class="rval" id="paraV"></span></div>
         <div class="row"><label>首行缩进</label><input type="checkbox" class="chk" id="indentChk">
@@ -1471,8 +1471,10 @@ function parseDocument(src){
             start:(t.attrs&&t.attrs.start!=null)?+t.attrs.start:1, src:slice(t), breakable:true});
           markRange(b,seg,t); blocks.push(b);
         }
-        else if(t.type==='hr')
-          blocks.push(mkBlock('divider',{}));
+        else if(t.type==='hr'){
+          const b=mkBlock('divider',{});
+          markRange(b,seg,t); blocks.push(b);
+        }
       }
       if(isOpen) depth++; else if(isClose) depth--;
     }
@@ -2268,12 +2270,16 @@ function makePaper(page, geo, opts={}){
     }
     const bodyEl=document.createElement('div'); bodyEl.className='page-body';
     bodyEl.style.height=geo.mode==='paged'?geo.contentH+'px':'auto';
+    // 卡片模式：整张卡片作为「一个可编辑块」（多段落连续编辑）；书籍模式仍逐块编辑
+    const cardMerge=!opts.export && geo.mode==='infinite';
     for(const it of page.blocks){
       const el=renderItemEl(it);
       if(!el)continue;
       const b=it.block;
       if(!opts.export && typeof EDITABLE_TYPES!=='undefined'){
-        if(EDITABLE_TYPES.has(b.type) && !isSliceItem(it)){
+        if(cardMerge){
+          if(b.id) el.dataset.blockId=b.id;   // 记录来源块，回写时按各块源码区间重建 Markdown
+        } else if(EDITABLE_TYPES.has(b.type) && !isSliceItem(it)){
           el.contentEditable='true';
           el.dataset.blockId=b.id;
         } else if(b.type==='image'){
@@ -2284,6 +2290,20 @@ function makePaper(page, geo, opts={}){
       bodyEl.appendChild(el);
     }
     if(bodyEl.firstElementChild)bodyEl.firstElementChild.classList.add('first-on-page');
+    if(cardMerge){
+      // 记录整卡覆盖的源码区间：编辑回写时整体替换，即使用户删掉首/末段落也不会遗留源码
+      let cs=null, ce=null;
+      for(const it of page.blocks){
+        const b=it.block;
+        if(!b||b.mdStart==null||b.mdEnd==null)continue;
+        cs=cs==null?b.mdStart:Math.min(cs,b.mdStart);
+        ce=ce==null?b.mdEnd:Math.max(ce,b.mdEnd);
+      }
+      bodyEl._mdStart=cs; bodyEl._mdEnd=ce;
+      bodyEl.contentEditable='true';
+      bodyEl.dataset.cardEdit='1';
+      bodyEl._plainHtml=bodyEl.innerHTML;   // 记住初始 DOM，用于判断是否真的改过
+    }
     paper.appendChild(bodyEl);
   }
   if(P.wm&&!page.blank){
@@ -2472,6 +2492,7 @@ function findBlockById(id){
   return t||null;
 }
 function syncBlockEdit(el){
+  if(el.dataset.cardEdit) return syncCardEdit(el);
   const id=el.dataset.blockId;
   const b=findBlockById(id);
   if(!b||b.mdStart==null||b.mdEnd==null) return;
@@ -2480,6 +2501,87 @@ function syncBlockEdit(el){
   const orig=state.md.slice(b.mdStart,b.mdEnd);
   if(newMd===orig) return;
   state.md=state.md.slice(0,b.mdStart)+newMd+state.md.slice(b.mdEnd);
+  const ta=$('#mdInput'); const st=ta.scrollTop;
+  ta.value=state.md; ta.scrollTop=st;
+  markDirty();
+  toast('已同步到 Markdown，重新分页中…');
+}
+/* 卡片模式：整卡内单个块元素 → Markdown（该元素被改动过时的兜底转换） */
+function blockElToMd(el, b){
+  const tag=el.tagName;
+  if(tag==='P') return domToMd(el).replace(/\n+$/,'');
+  if(/^H[1-6]$/.test(tag)) return '#'.repeat(+tag[1])+' '+el.textContent.trim();
+  if(tag==='BLOCKQUOTE'){
+    const ps=[...el.children].filter(c=>c.tagName==='P');
+    const inner=(ps.length?ps:[el]).map(p=>domToMd(p).replace(/\n/g,'\n> ')).join('\n> ');
+    return '> '+inner;
+  }
+  if(tag==='PRE'){
+    const code=el.querySelector('code');
+    const t=(code?code.textContent:el.textContent).replace(/\n+$/,'');
+    return '```'+(el.dataset.lang||(b&&b.lang)||'')+'\n'+t+'\n```';
+  }
+  if(tag==='TABLE'){
+    const head=[...el.querySelectorAll('thead th')].map(th=>th.textContent.trim().replace(/\|/g,'\\|'));
+    const rows=[...el.querySelectorAll('tbody tr')].map(tr=>[...tr.children].map(td=>td.textContent.trim().replace(/\|/g,'\\|')));
+    const cols=head.length||(rows[0]?rows[0].length:0);
+    if(!cols) return null;
+    const line=cells=>'| '+cells.join(' | ')+' |';
+    return [line(head),'| '+Array(cols).fill('---').join(' | ')+' |',...rows.map(line)].join('\n');
+  }
+  if(tag==='UL'||tag==='OL'){
+    const ordered=tag==='OL';
+    const start=ordered?(+el.getAttribute('start')||1):1;
+    return [...el.children].filter(c=>c.tagName==='LI').map((li,i)=>
+      (ordered?(i+start)+'. ':'- ')+domToMd(li).replace(/\n/g,' ')).join('\n');
+  }
+  if(tag==='HR') return '---';
+  if(tag==='FIGURE'){
+    const img=el.querySelector('img');
+    const cap=el.querySelector('figcaption');
+    const src=img?(img.getAttribute('src')||''):((b&&b.src)||'');
+    const alt=cap?cap.textContent.trim():((b&&b.caption)||'');
+    return '!['+alt+']('+src+')';
+  }
+  if(el.classList&&el.classList.contains('callout')){
+    const t=el.querySelector('.co-title');
+    const bodyEl=el.querySelector('.co-body');
+    const kind=(el.dataset&&el.dataset.kind)||(b&&b.kind)||'tip';
+    const body=bodyEl?domToMd(bodyEl).trim():'';
+    return '::: '+kind+((t&&t.textContent.trim())?' '+t.textContent.trim():'')+'\n'+body+'\n:::';
+  }
+  if(el.classList&&el.classList.contains('card-title'))   // 卡片标题（伪块）
+    return ((b&&b.titleKind==='heading')?'#'.repeat(b.level||1)+' ':((b&&b.linePrefix)||''))+el.textContent.trim();
+  return domToMd(el).replace(/\n+$/,'');
+}
+/* 卡片内单个子元素 → Markdown：未改动的块直接沿用原始源码，最大限度保真 */
+function cardChildToMd(el){
+  const id=el.dataset&&el.dataset.blockId;
+  const b=id?findBlockById(id):null;
+  if(b&&b.mdStart!=null&&b.mdEnd!=null&&b.el&&el.innerHTML===b.el.innerHTML) return state.md.slice(b.mdStart,b.mdEnd);
+  return blockElToMd(el,b);
+}
+/* 卡片模式：整卡 DOM → Markdown，替换覆盖整张卡的源码区间 */
+function syncCardEdit(el){
+  if(el.innerHTML===el._plainHtml) return;   // 未真正改动，不重写源文
+  let start=el._mdStart, end=el._mdEnd;
+  if(start==null||end==null){   // 兜底：按现存子块的源码区间取并集
+    const ranged=[];
+    el.querySelectorAll('[data-block-id]').forEach(c=>{
+      const b=findBlockById(c.dataset.blockId);
+      if(b&&b.mdStart!=null&&b.mdEnd!=null) ranged.push(b);
+    });
+    if(!ranged.length) return;
+    start=Math.min(...ranged.map(b=>b.mdStart));
+    end=Math.max(...ranged.map(b=>b.mdEnd));
+  }
+  const newMd=[...el.childNodes].map(n=>{
+    if(n.nodeType===3) return n.textContent.trim()||null;   // 段落之间直接输入的裸文本，也当成一段
+    return n.nodeType===1?cardChildToMd(n):null;
+  }).filter(s=>s!=null&&s!=='').join('\n\n');
+  const orig=state.md.slice(start,end);
+  if(newMd===orig) return;
+  state.md=state.md.slice(0,start)+newMd+state.md.slice(end);
   const ta=$('#mdInput'); const st=ta.scrollTop;
   ta.value=state.md; ta.scrollTop=st;
   markDirty();
@@ -2737,9 +2839,9 @@ $('#stage').addEventListener('click',e=>{
   }
 });
 
-/* 预览编辑：失焦时把修改同步回 Markdown 源并重排 */
+/* 预览编辑：失焦时把修改同步回 Markdown 源并重排（卡片模式为整卡一个编辑块） */
 $('#stage').addEventListener('focusout',e=>{
-  const el=e.target && e.target.closest && e.target.closest('[data-block-id][contenteditable="true"]');
+  const el=e.target && e.target.closest && e.target.closest('[data-card-edit],[data-block-id][contenteditable="true"]');
   if(el) syncBlockEdit(el);
 });
 
