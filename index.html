@@ -292,6 +292,17 @@ input[type=checkbox].chk{accent-color:var(--ui-accent);width:14px;height:14px;cu
   background:var(--chip-accent);transform:translateY(-50%)}
 .chip .nm{font-size:11px;color:var(--ui-muted)}
 .chip.on .nm{color:var(--ui-text)}
+/* 配方（自选预设） */
+#recipeChips{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 4px}
+#recipeChips:empty{display:none}
+.rchip{position:relative}
+.rchip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rchip .del{position:absolute;top:2px;right:2px;width:17px;height:17px;border-radius:50%;padding:0;
+  display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1;
+  color:#fff;background:rgba(20,22,28,.55);opacity:0;transition:.15s}
+.rchip:hover .del{opacity:1}
+.rchip .del:hover{background:#e5534b}
+#recipeTip{display:none}
 
 /* ===================== 状态栏 / 杂项 ===================== */
 #statusBar{height:26px;flex:0 0 26px;display:flex;align-items:center;gap:16px;padding:0 12px;font-size:11px;
@@ -402,6 +413,8 @@ body.immersive #stageWrap{padding:20px}
   .seg.mini button{height:30px;font-size:12.5px}
   #themeChips{grid-template-columns:repeat(2,1fr)}
   .chip{padding:8px}.chip .sw{height:32px}
+  #recipeChips{grid-template-columns:repeat(2,1fr)}
+  .rchip .del{opacity:1;width:20px;height:20px}
 
   /* 底部三 Tab 导航 */
   #mobileNav{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;
@@ -552,6 +565,16 @@ body.immersive #stageWrap{padding:20px}
 
   <!-- 右：属性面板 -->
   <aside id="propsPanel">
+    <details open>
+      <summary>配方 · RECIPE</summary>
+      <div class="sec">
+        <div class="row"><button class="tbtn fill" id="recipeSaveBtn" title="把当前配色、字体等参数保存为配方">＋ 保存当前为配方</button></div>
+        <div id="recipeChips"></div>
+        <div class="hint-txt" id="recipeEmpty">还没有自选配方。调好配色与字体后点上方按钮保存，之后即可一键套用。</div>
+        <div class="hint-txt" id="recipeTip">单击套用 · 双击名字改名 · 右上角 × 删除</div>
+      </div>
+    </details>
+
     <details open>
       <summary>标题 · TITLE</summary>
       <div class="sec">
@@ -2333,6 +2356,25 @@ function confirmDlg(msg, okText='确定'){
     root.querySelector('.overlay').onclick=e=>{if(e.target.classList.contains('overlay')){root.innerHTML='';res(false)}};
   });
 }
+function promptDlg(msg, defVal='', okText='确定'){
+  return new Promise(res=>{
+    const root=$('#modalRoot');
+    root.innerHTML=`<div class="overlay"><div class="dlg"><h3>${msg}</h3>
+      <div class="dlg-body"><input type="text" class="ui-inp" id="dlgInput" style="width:100%"></div>
+      <div class="dlg-foot"><button class="tbtn" id="dlgCancel">取消</button>
+      <button class="tbtn primary" id="dlgOk">${okText}</button></div></div></div>`;
+    const inp=$('#dlgInput'); inp.value=defVal;
+    const done=val=>{root.innerHTML='';res(val)};
+    $('#dlgCancel').onclick=()=>done(null);
+    $('#dlgOk').onclick=()=>done(inp.value);
+    inp.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();done(inp.value)}
+      else if(e.key==='Escape'){e.preventDefault();done(null)}
+    });
+    root.querySelector('.overlay').onclick=e=>{if(e.target.classList.contains('overlay'))done(null)};
+    inp.focus(); inp.select();
+  });
+}
 function helpDlg(){
   const root=$('#modalRoot');
   root.innerHTML=`<div class="overlay"><div class="dlg"><h3>使用说明</h3><div class="dlg-body">
@@ -2828,15 +2870,15 @@ async function exportPagePNG(idx){
   try{
     const canvas=await snapshotPage(idx);
     const url=canvas.toDataURL('image/'+fmtExt(),.92);
-    const geo=currentGeo;
-    download(url,`${safeName(currentDoc.title)}_${String(idx+1).padStart(2,'0')}_${geo.presetName}.${fmtExt()}`);
+    // 文件名一律用文档标题（多文件时才加序号）
+    download(url,`${safeName(currentDoc.title)}.${fmtExt()}`);
     toast('已导出 '+String(idx+1).padStart(2,'0')+' 页');
   }catch(e){console.error(e);toast('导出失败：'+e.message,true)}
   busy.hide();
 }
 async function exportAllPNG(){
   if(!window.JSZip){toast('缺少 JSZip 组件',true);return}
-  const geo=currentGeo,n=currentPages.length;
+  const n=currentPages.length;
   busy.show('正在批量导出…');
   try{
     const zip=new JSZip();
@@ -2844,14 +2886,14 @@ async function exportAllPNG(){
     for(let i=0;i<n;i++){
       busy.prog(i/n);
       const canvas=await snapshotPage(i);
-      folder.file(`${safeName(currentDoc.title)}_${String(i+1).padStart(2,'0')}_${geo.presetName}.${fmtExt()}`,
+      folder.file(`${safeName(currentDoc.title)}_${String(i+1).padStart(2,'0')}.${fmtExt()}`,
         canvas.toDataURL('image/'+fmtExt(),.92).split(',')[1],{base64:true});
     }
     folder.file('source.md',state.md);
     folder.file('project.json',snapshotState());
     const blob=await zip.generateAsync({type:'blob'});
     const url=URL.createObjectURL(blob);
-    download(url,`${safeName(currentDoc.title)}_${geo.presetName}_${n}页.zip`);
+    download(url,`${safeName(currentDoc.title)}.zip`);
     setTimeout(()=>URL.revokeObjectURL(url),4000);
     toast(`已导出 ${n} 页（ZIP）`);
   }catch(e){console.error(e);toast('导出失败：'+e.message,true)}
@@ -2859,14 +2901,14 @@ async function exportAllPNG(){
 }
 async function exportLongImage(){
   if(currentGeo.mode!=='infinite'){toast('请切换到卡片模式再导出卡片图片',true);return}
-  const geo=currentGeo,n=currentPages.length;
+  const n=currentPages.length;
   // 单张卡片：直接下载一张长图；多张卡片：逐张导出并打包 ZIP
   if(n<=1){
     busy.show('正在生成长图…');
     try{
       const canvas=await snapshotPage(0);
       const url=canvas.toDataURL('image/'+fmtExt(),.92);
-      download(url,`${safeName(currentDoc.title)}_长图_${geo.presetName}.${fmtExt()}`);
+      download(url,`${safeName(currentDoc.title)}.${fmtExt()}`);
       toast('长图已导出');
     }catch(e){console.error(e);toast('导出失败：'+e.message,true)}
     busy.hide();
@@ -2879,12 +2921,12 @@ async function exportLongImage(){
     for(let i=0;i<n;i++){
       busy.prog(i/n);
       const canvas=await snapshotPage(i);
-      folder.file(`${safeName(currentDoc.title)}_卡片${String(i+1).padStart(2,'0')}_${geo.presetName}.${fmtExt()}`,
+      folder.file(`${safeName(currentDoc.title)}_${String(i+1).padStart(2,'0')}.${fmtExt()}`,
         canvas.toDataURL('image/'+fmtExt(),.92).split(',')[1],{base64:true});
     }
     const blob=await zip.generateAsync({type:'blob'});
     const url=URL.createObjectURL(blob);
-    download(url,`${safeName(currentDoc.title)}_${n}张卡片_${geo.presetName}.zip`);
+    download(url,`${safeName(currentDoc.title)}.zip`);
     setTimeout(()=>URL.revokeObjectURL(url),4000);
     toast(`已导出 ${n} 张卡片（ZIP）`);
   }catch(e){console.error(e);toast('导出失败：'+e.message,true)}
@@ -2916,7 +2958,7 @@ async function exportPDF(){
       const canvas=await snapshotPage(i);
       doc.addImage(canvas.toDataURL('image/png'),'PNG',0,0,wmm,hmm,undefined,'FAST');
     }
-    doc.save(`${safeName(currentDoc.title)}_${geo.presetName}.pdf`);
+    doc.save(`${safeName(currentDoc.title)}.pdf`);
     toast(`PDF 已导出（${n} 页）`);
   }catch(e){console.error(e);toast('导出失败：'+e.message,true)}
   busy.hide();
@@ -3021,7 +3063,7 @@ function inlineStyles(el,ref){
 function saveProject(){
   const json=snapshotState();
   const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
-  download(url,`${safeName(currentDoc.title)}_排版工程.json`);
+  download(url,`${safeName(currentDoc.title)}.json`);
   setTimeout(()=>URL.revokeObjectURL(url),4000);
   toast('工程文件已保存（含内容+规格+样式）');
 }
@@ -3157,6 +3199,71 @@ function applyTheme(id){
   $$('#themeChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.id===id));
 }
 
+/* ---------- 配方（自选预设：配色 + 字体等参数） ---------- */
+const RECIPE_KEY='paiban_recipes_v1';
+let recipes=[];
+function loadRecipes(){
+  try{const r=JSON.parse(localStorage.getItem(RECIPE_KEY));recipes=Array.isArray(r)?r:[];}
+  catch(e){recipes=[]}
+}
+function saveRecipes(){try{localStorage.setItem(RECIPE_KEY,JSON.stringify(recipes))}catch(e){}}
+function captureRecipe(){
+  return {
+    layout:JSON.parse(JSON.stringify(state.settings.layout)),
+    color: JSON.parse(JSON.stringify(state.settings.color)),
+  };
+}
+function buildRecipeChips(){
+  const box=$('#recipeChips'); if(!box)return;
+  box.innerHTML='';
+  recipes.forEach(r=>{
+    const col=r.color||{};
+    const bg=col.bgType==='grad'?(col.grad||col.bg):(col.bg||'#fff');
+    const c=document.createElement('div');
+    c.className='chip rchip'; c.dataset.id=r.id;
+    c.title='单击套用 · 双击名字改名';
+    c.innerHTML=`<div class="sw" style="background:${bg};--chip-accent:${col.accent||'#3b5bfd'}"></div><div class="nm"></div><button class="del" title="删除配方">×</button>`;
+    c.querySelector('.nm').textContent=r.name;
+    c.addEventListener('click',()=>applyRecipe(r.id));
+    c.querySelector('.nm').addEventListener('dblclick',e=>{e.stopPropagation();renameRecipe(r.id)});
+    c.querySelector('.del').addEventListener('click',e=>{e.stopPropagation();delRecipe(r.id)});
+    box.appendChild(c);
+  });
+  const has=recipes.length>0;
+  $('#recipeEmpty').style.display=has?'none':'';
+  $('#recipeTip').style.display=has?'block':'none';
+}
+async function saveRecipeFromCurrent(){
+  const def='配方 '+(recipes.length+1);
+  const name=await promptDlg('保存为配方', def, '保存');
+  if(name===null)return;
+  const nm=name.trim()||def;
+  recipes.unshift(Object.assign({id:'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,6),name:nm},captureRecipe()));
+  saveRecipes(); buildRecipeChips();
+  toast('已保存配方：'+nm);
+}
+function applyRecipe(id){
+  const r=recipes.find(x=>x.id===id); if(!r)return;
+  state.settings.layout=deepMerge(defaultSettings().layout, JSON.parse(JSON.stringify(r.layout||{})));
+  state.settings.color =deepMerge(defaultSettings().color , JSON.parse(JSON.stringify(r.color ||{})));
+  syncUI(); markDirty();
+  $$('#recipeChips .chip').forEach(c=>c.classList.toggle('on',c.dataset.id===id));
+}
+async function renameRecipe(id){
+  const r=recipes.find(x=>x.id===id); if(!r)return;
+  const name=await promptDlg('重命名配方', r.name, '保存');
+  if(name===null)return;
+  r.name=name.trim()||r.name;
+  saveRecipes(); buildRecipeChips();
+}
+async function delRecipe(id){
+  const r=recipes.find(x=>x.id===id); if(!r)return;
+  if(!await confirmDlg(`删除配方「${r.name}」？`,'删除'))return;
+  recipes=recipes.filter(x=>x.id!==id);
+  saveRecipes(); buildRecipeChips();
+  toast('已删除配方：'+r.name);
+}
+
 function applyPreset(id){
   state.presetId=id;
   const p=getPreset(id);
@@ -3268,6 +3375,8 @@ function bindAll(){
   bindChk('footerChk','settings.page.footer');bindSel('footerSel','settings.page.footerFmt');
   bindText('wmInp','settings.page.wm');
   bindRange('wmOpR','settings.page.wmOp','wmOpV');
+  /* 配方 */
+  $('#recipeSaveBtn').addEventListener('click',saveRecipeFromCurrent);
 }
 
 /* ---------- 编辑器 ---------- */
@@ -3573,6 +3682,7 @@ async function boot(){
     document.fonts.addEventListener('loadingdone',()=>scheduleTypeset());
   }
   buildThemeChips();
+  loadRecipes(); buildRecipeChips();
   bindAll();
   bindEditor();
   bindButtons();
